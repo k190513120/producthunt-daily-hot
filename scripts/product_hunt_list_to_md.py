@@ -256,7 +256,7 @@ def fetch_mock_data():
 def send_to_webhook(products):
     """将产品数据发送到飞书Webhook"""
     # 更新为新的webhook URL
-    webhook_url = os.getenv('FEISHU_WEBHOOK_URL', 'https://bytedance.larkoffice.com/base/workflow/webhook/event/TKzMahnoMw166chYFhNcjZ6qnGc')
+    webhook_url = os.getenv('FEISHU_WEBHOOK_URL', 'https://larkcommunity.feishu.cn/base/workflow/webhook/event/O7fjaz3CTw5lHOh5g0ccP70EnKf')
     
     # 获取今天的日期
     today = datetime.now(timezone.utc)
