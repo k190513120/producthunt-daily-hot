@@ -9,25 +9,11 @@ except ImportError:
 
 import requests
 from datetime import datetime, timedelta, timezone
-import openai
 from bs4 import BeautifulSoup
 import pytz
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
-# 创建 OpenAI 客户端实例
-api_key = os.getenv('OPENAI_API_KEY')
-if not api_key:
-    print("警告: 未设置 OPENAI_API_KEY 环境变量，将无法使用 OpenAI 服务")
-    client = None
-else:
-    openai.api_key = api_key
-    try:
-        client = openai.Client(api_key=api_key)  # 新版本的客户端初始化方式
-        print("成功初始化 OpenAI 客户端")
-    except Exception as e:
-        print(f"初始化 OpenAI 客户端失败: {e}")
-        client = None
+import json
 
 class Product:
     def __init__(self, id: str, name: str, tagline: str, description: str, votesCount: int, createdAt: str, featuredAt: str, website: str, url: str, media=None, **kwargs):
@@ -41,8 +27,6 @@ class Product:
         self.url = url
         self.og_image_url = self.get_image_url_from_media(media)
         self.keyword = self.generate_keywords()
-        self.translated_tagline = self.translate_text(self.tagline)
-        self.translated_description = self.translate_text(self.description)
 
     def get_image_url_from_media(self, media):
         """从API返回的media字段中获取图片URL"""
@@ -90,68 +74,12 @@ class Product:
     def generate_keywords(self) -> str:
         """生成产品的关键词，显示在一行，用逗号分隔"""
         try:
-            # 如果 OpenAI 客户端不可用，直接使用备用方法
-            if client is None:
-                print(f"OpenAI 客户端不可用，使用备用关键词生成方法: {self.name}")
-                words = set((self.name + ", " + self.tagline).replace("&", ",").replace("|", ",").replace("-", ",").split(","))
-                return ", ".join([word.strip() for word in words if word.strip()])
-                
-            prompt = f"根据以下内容生成适合的中文关键词，用英文逗号分隔开：\n\n产品名称：{self.name}\n\n标语：{self.tagline}\n\n描述：{self.description}"
-            
-            try:
-                print(f"正在为 {self.name} 生成关键词...")
-                response = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "Generate suitable Chinese keywords based on the product information provided. The keywords should be separated by commas."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    max_tokens=50,
-                    temperature=0.7,
-                )
-                keywords = response.choices[0].message.content.strip()
-                if ',' not in keywords:
-                    keywords = ', '.join(keywords.split())
-                print(f"成功为 {self.name} 生成关键词")
-                return keywords
-            except Exception as e:
-                print(f"OpenAI API 调用失败，使用备用关键词生成方法: {e}")
-                # 备用方法：从标题和标语中提取关键词
-                words = set((self.name + ", " + self.tagline).replace("&", ",").replace("|", ",").replace("-", ",").split(","))
-                return ", ".join([word.strip() for word in words if word.strip()])
+            # 使用简单的关键词提取方法
+            words = set((self.name + ", " + self.tagline).replace("&", ",").replace("|", ",").replace("-", ",").split(","))
+            return ", ".join([word.strip() for word in words if word.strip()])
         except Exception as e:
             print(f"关键词生成失败: {e}")
             return self.name  # 至少返回产品名称作为关键词
-
-    def translate_text(self, text: str) -> str:
-        """使用OpenAI翻译文本内容"""
-        try:
-            # 如果 OpenAI 客户端不可用，直接返回原文
-            if client is None:
-                print(f"OpenAI 客户端不可用，无法翻译: {self.name}")
-                return text
-                
-            try:
-                print(f"正在翻译 {self.name} 的内容...")
-                response = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "你是世界上最专业的翻译工具，擅长英文和中文互译。你是一位精通英文和中文的专业翻译，尤其擅长将IT公司黑话和专业词汇翻译成简洁易懂的地道表达。你的任务是将以下内容翻译成地道的中文，风格与科普杂志或日常对话相似。"},
-                        {"role": "user", "content": text},
-                    ],
-                    max_tokens=500,
-                    temperature=0.7,
-                )
-                translated_text = response.choices[0].message.content.strip()
-                print(f"成功翻译 {self.name} 的内容")
-                return translated_text
-            except Exception as e:
-                print(f"OpenAI API 翻译失败: {e}")
-                # 如果 API 调用失败，返回原文
-                return text
-        except Exception as e:
-            print(f"翻译过程中出错: {e}")
-            return text
 
     def convert_to_beijing_time(self, utc_time_str: str) -> str:
         """将UTC时间转换为北京时间"""
@@ -160,58 +88,40 @@ class Product:
         beijing_time = utc_time.replace(tzinfo=pytz.utc).astimezone(beijing_tz)
         return beijing_time.strftime('%Y年%m月%d日 %p%I:%M (北京时间)')
 
-    def to_markdown(self, rank: int) -> str:
-        """返回产品数据的Markdown格式"""
-        og_image_markdown = f"![{self.name}]({self.og_image_url})"
-        return (
-            f"## [{rank}. {self.name}]({self.url})\n"
-            f"**标语**：{self.translated_tagline}\n"
-            f"**介绍**：{self.translated_description}\n"
-            f"**产品网站**: [立即访问]({self.website})\n"
-            f"**Product Hunt**: [View on Product Hunt]({self.url})\n\n"
-            f"{og_image_markdown}\n\n"
-            f"**关键词**：{self.keyword}\n"
-            f"**票数**: 🔺{self.votes_count}\n"
-            f"**是否精选**：{self.featured}\n"
-            f"**发布时间**：{self.created_at}\n\n"
-            f"---\n\n"
-        )
+    def to_dict(self) -> dict:
+        """将产品数据转换为字典格式，用于发送到Webhook"""
+        return {
+            "name": self.name,
+            "tagline": self.tagline,
+            "description": self.description,
+            "votes_count": self.votes_count,
+            "created_at": self.created_at,
+            "featured": self.featured,
+            "website": self.website,
+            "url": self.url,
+            "og_image_url": self.og_image_url,
+            "keyword": self.keyword
+        }
 
 def get_producthunt_token():
     """获取 Product Hunt 访问令牌"""
-    # 优先使用 PRODUCTHUNT_DEVELOPER_TOKEN 环境变量
-    developer_token = os.getenv('PRODUCTHUNT_DEVELOPER_TOKEN')
-    if developer_token:
-        print("使用 PRODUCTHUNT_DEVELOPER_TOKEN 环境变量")
-        return developer_token
+    # 直接返回硬编码的token
+    return "pfL-2mZeM7TWpumhKEfPwiQTeRp-SWuOZxNLMcZ3k28"
+    # 优先使用环境变量
+    token = os.getenv('PRODUCTHUNT_DEVELOPER_TOKEN')
+    if token:
+        return token
     
-    # 如果没有 developer token，尝试使用 client credentials 获取访问令牌
-    client_id = os.getenv('PRODUCTHUNT_CLIENT_ID')
-    client_secret = os.getenv('PRODUCTHUNT_CLIENT_SECRET')
-    
-    if not client_id or not client_secret:
-        raise Exception("Product Hunt client ID or client secret not found in environment variables")
-    
-    # 使用 client credentials 获取访问令牌
-    token_url = "https://api.producthunt.com/v2/oauth/token"
-    payload = {
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "grant_type": "client_credentials"
-    }
-    
-    try:
-        response = requests.post(token_url, json=payload)
-        response.raise_for_status()
-        token_data = response.json()
-        return token_data.get("access_token")
-    except Exception as e:
-        print(f"获取 Product Hunt 访问令牌时出错: {e}")
-        raise Exception(f"Failed to get Product Hunt access token: {e}")
+    # 如果没有token，返回None，这样会使用模拟数据
+    print("未找到Product Hunt token，将使用模拟数据")
+    return None
 
 def fetch_product_hunt_data():
     """从Product Hunt获取前一天的Top 30数据"""
     token = get_producthunt_token()
+    if not token:
+        raise Exception("No Product Hunt token available")
+        
     yesterday = datetime.now(timezone.utc) - timedelta(days=1)
     date_str = yesterday.strftime('%Y-%m-%d')
     url = "https://api.producthunt.com/v2/api/graphql"
@@ -273,16 +183,17 @@ def fetch_product_hunt_data():
         try:
             response = session.post(url, headers=headers, json={"query": query})
             response.raise_for_status()  # 抛出非200状态码的异常
+            
+            data = response.json()['data']['posts']
+            posts = data['nodes']
+            all_posts.extend(posts)
+
+            has_next_page = data['pageInfo']['hasNextPage']
+            cursor = data['pageInfo']['endCursor']
+            
         except requests.exceptions.RequestException as e:
             print(f"请求失败: {e}")
             raise Exception(f"Failed to fetch data from Product Hunt: {e}")
-
-        data = response.json()['data']['posts']
-        posts = data['nodes']
-        all_posts.extend(posts)
-
-        has_next_page = data['pageInfo']['hasNextPage']
-        cursor = data['pageInfo']['endCursor']
 
     # 只保留前30个产品
     return [Product(**post) for post in sorted(all_posts, key=lambda x: x['votesCount'], reverse=True)[:30]]
@@ -326,47 +237,115 @@ def fetch_mock_data():
                     "videoUrl": None
                 }
             ]
+        },
+        {
+            "id": "3",
+            "name": "AI Code Reviewer",
+            "tagline": "Automated code review powered by AI",
+            "description": "An intelligent code review tool that uses AI to analyze your code, suggest improvements, and catch potential bugs before they reach production.",
+            "votesCount": 324,
+            "createdAt": "2025-03-07T14:30:00Z",
+            "featuredAt": None,
+            "website": "https://example.com/ai-code-reviewer",
+            "url": "https://www.producthunt.com/posts/ai-code-reviewer",
+            "media": []
         }
     ]
     return [Product(**product) for product in mock_products]
 
-def generate_markdown(products, date_str):
-    """生成Markdown内容并保存到data目录"""
-    # 获取今天的日期并格式化
+def send_to_webhook(products):
+    """将产品数据发送到飞书Webhook"""
+    # 更新为新的webhook URL
+    webhook_url = os.getenv('FEISHU_WEBHOOK_URL', 'https://bytedance.larkoffice.com/base/workflow/webhook/event/TKzMahnoMw166chYFhNcjZ6qnGc')
+    
+    # 获取今天的日期
     today = datetime.now(timezone.utc)
     date_today = today.strftime('%Y-%m-%d')
-
-    markdown_content = f"# PH今日热榜 | {date_today}\n\n"
-    for rank, product in enumerate(products, 1):
-        markdown_content += product.to_markdown(rank)
-
-    # 确保 data 目录存在
-    os.makedirs('data', exist_ok=True)
-
-    # 修改文件保存路径到 data 目录
-    file_name = f"data/producthunt-daily-{date_today}.md"
     
-    # 如果文件存在，直接覆盖
-    with open(file_name, 'w', encoding='utf-8') as file:
-        file.write(markdown_content)
-    print(f"文件 {file_name} 生成成功并已覆盖。")
-
+    # 构建要发送的JSON数据 - 包含更丰富的产品信息
+    products_data = []
+    for i, product in enumerate(products[:10]):  # 只发送前10个产品
+        product_info = {
+            "排名": i + 1,
+            "产品名称": product.name,
+            "标语": product.tagline,
+            "详细描述": product.description,
+            "产品图片链接": product.og_image_url,
+            "票数": product.votes_count,
+            "创建时间": product.created_at,
+            "是否精选": product.featured,
+            "官方网站": product.website,
+            "Product Hunt链接": product.url,
+            "关键词": product.keyword,
+            "媒体类型": "图片" if product.og_image_url else "无图片"
+        }
+        products_data.append(product_info)
+    
+    # 添加统计信息
+    total_votes = sum(product.votes_count for product in products[:10])
+    avg_votes = total_votes // len(products[:10]) if products else 0
+    
+    data = {
+        "日期": date_today,
+        "数据来源": "Product Hunt API",
+        "产品总数": len(products_data),
+        "总票数": total_votes,
+        "平均票数": avg_votes,
+        "最高票数": products[0].votes_count if products else 0,
+        "最低票数": products[min(9, len(products)-1)].votes_count if products else 0,
+        "产品列表": products_data
+    }
+    
+    print(f"准备发送数据到Webhook: {webhook_url}")
+    print(f"发送的JSON数据预览:")
+    print(json.dumps(data, ensure_ascii=False, indent=2)[:1500] + "..." if len(json.dumps(data, ensure_ascii=False)) > 1500 else json.dumps(data, ensure_ascii=False, indent=2))
+    
+    # 发送JSON数据到webhook
+    try:
+        response = requests.post(webhook_url, json=data, timeout=10)
+        response.raise_for_status()
+        print(f"成功发送数据到Webhook: {response.status_code}")
+        return True
+    except Exception as e:
+        print(f"发送到Webhook失败: {e}")
+        return False
 
 def main():
+    print("开始运行Product Hunt数据获取程序...")
+    
     # 获取昨天的日期并格式化
     yesterday = datetime.now(timezone.utc) - timedelta(days=1)
     date_str = yesterday.strftime('%Y-%m-%d')
+    print(f"获取日期: {date_str}")
 
     try:
         # 尝试获取Product Hunt数据
+        print("尝试从Product Hunt API获取数据...")
         products = fetch_product_hunt_data()
+        print(f"成功获取到 {len(products)} 个产品")
     except Exception as e:
         print(f"获取Product Hunt数据失败: {e}")
         print("使用模拟数据继续...")
         products = fetch_mock_data()
+        print(f"使用模拟数据，共 {len(products)} 个产品")
 
-    # 生成Markdown文件
-    generate_markdown(products, date_str)
+    # 显示产品信息
+    print("\n=== 产品列表 ===")
+    for i, product in enumerate(products[:5], 1):  # 只显示前5个
+        print(f"{i}. {product.name}")
+        print(f"   标语: {product.tagline}")
+        print(f"   票数: {product.votes_count}")
+        print(f"   时间: {product.created_at}")
+        print()
+
+    # 发送数据到Webhook
+    print("发送数据到Webhook...")
+    success = send_to_webhook(products)
+    
+    if success:
+        print("程序执行完成！")
+    else:
+        print("程序执行完成，但Webhook发送失败")
 
 if __name__ == "__main__":
     main()
